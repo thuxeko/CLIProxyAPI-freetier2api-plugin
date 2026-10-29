@@ -1,0 +1,178 @@
+name: Build Vietnamese Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tên Tag/Phiên bản (ví dụ v0.1.21-vi, để trống sẽ tự sinh theo upstream tag)'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README*'
+      - 'LICENSE'
+      - '.gitignore'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }} (Tiếng Việt)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, ext: so, cc: gcc }
+          - { goos: linux, goarch: arm64, ext: so, cc: aarch64-linux-gnu-gcc }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Xác định phiên bản
+        id: get_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.21")
+            TAG="${LATEST_TAG}-vi"
+          fi
+          echo "VERSION=${TAG}" >> $GITHUB_ENV
+          echo "CLEAN_VERSION=${TAG#v}" >> $GITHUB_ENV
+          echo "Đang build phiên bản: ${TAG}"
+
+      - name: Cài đặt Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Tiêm từ điển tiếng Việt vào console.html
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/localize.py internal/admin/console.html i18n/vi.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Cài đặt cross-compiler cho linux/arm64
+        if: matrix.cc == 'aarch64-linux-gnu-gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build c-shared plugin
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
+        run: |
+          set -euo pipefail
+          mkdir -p build_out dist
+          go build -buildmode=c-shared -trimpath \
+            -ldflags "-s -w -X main.pluginVersion=${VERSION}" \
+            -o "build_out/freetier2api.${matrix.ext}" .
+          
+          # Đóng gói zip chuẩn CPA
+          ZIP_NAME="freetier2api_${CLEAN_VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          cd build_out
+          zip -9 "../dist/${ZIP_NAME}" "freetier2api.${matrix.ext}"
+          cd ..
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freetier2api-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Tạo GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Xác định phiên bản
+        id: get_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.21")
+            TAG="${LATEST_TAG}-vi"
+          fi
+          echo "VERSION=${TAG}" >> $GITHUB_ENV
+          echo "CLEAN_VERSION=${TAG#v}" >> $GITHUB_ENV
+
+      - name: Tải về các bản build
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Tạo file checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum *.zip > checksums.txt
+          cat checksums.txt
+
+      - name: Tạo Release Notes
+        shell: bash
+        run: |
+          cat << 'EOF' > release-notes.md
+          ## FreeTier 2API (Bản Việt hóa cho CLIProxyAPI)
+
+          Phiên bản plugin được Việt hóa toàn bộ giao diện quản trị Console và biên dịch tự động từ mã nguồn mới nhất của upstream `jiandanc/CLIProxyAPI-freetier2api-plugin`.
+
+          ### Hướng dẫn cài đặt
+          1. Tải file zip tương ứng với hệ điều hành:
+             * **Linux x86_64 / amd64**: `freetier2api_*_linux_amd64.zip`
+             * **Linux arm64**: `freetier2api_*_linux_arm64.zip`
+          2. Giải nén file zip, lấy file `freetier2api.so` thả vào thư mục `plugins/` của CPA.
+          3. Cấu hình `config.yaml` của CPA (nếu chưa có):
+             ```yaml
+             plugins:
+               enabled: true
+               dir: "plugins"
+               configs:
+                 freetier2api:
+                   enabled: true
+                   enabled_realms: "cn,global"
+             ```
+          4. Khởi động lại CPA. Truy cập trang quản trị tại:
+             `http://<CPA_HOST>:<PORT>/v0/resource/plugins/freetier2api/console`
+          EOF
+
+      - name: Đẩy lên GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Nếu tag đã tồn tại thì upload đè, nếu chưa thì tạo mới
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $VERSION đã tồn tại, đang tải lên các file đè lên..."
+            gh release upload "$VERSION" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            echo "Đang tạo mới Release $VERSION..."
+            gh release create "$VERSION" assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "FreeTier 2API ${VERSION} (Tiếng Việt)" \
+              --notes-file release-notes.md
+          fi
