@@ -39,6 +39,26 @@ def localize(html_path, json_path, out_path=None):
     # Also update lang attribute
     content = content.replace('<html lang="zh-CN">', '<html lang="vi">')
 
+    # Inject vendor translation helper in JS so dynamically loaded vendor names are translated
+    vendor_helper_js = """
+  // translateVendorName: Tự động chuyển đổi tên nhà cung cấp động từ /vendors sang tiếng Việt
+  function translateVendorName(name) {
+    if (!name) return "";
+    return String(name)
+      .replace(/国内版/g, "Bản nội địa")
+      .replace(/国际版/g, "Bản quốc tế")
+      .replace(/小浣熊/g, "Raccoon");
+  }
+"""
+    if "function translateVendorName(" not in content:
+        content = content.replace("var vendorsById = {};", "var vendorsById = {};" + vendor_helper_js)
+        # Apply in loadVendors: item.textContent = vendor.name -> translateVendorName(vendor.name)
+        content = content.replace("item.textContent = vendor.name;", "item.textContent = translateVendorName(vendor.name);")
+        # Apply in vendorLabel: return vendorsById[vendorID].name -> translateVendorName(vendorsById[vendorID].name)
+        content = content.replace("if (vendorID && vendorsById[vendorID]) return vendorsById[vendorID].name;",
+                                  "if (vendorID && vendorsById[vendorID]) return translateVendorName(vendorsById[vendorID].name);")
+        print("Injected dynamic vendor name translation logic into JS.")
+
     out_file = out_path if out_path else html_path
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(content)
