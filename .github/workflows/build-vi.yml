@@ -81,12 +81,12 @@ jobs:
           mkdir -p build_out dist
           go build -buildmode=c-shared -trimpath \
             -ldflags "-s -w -X main.pluginVersion=${VERSION}" \
-            -o "build_out/freetier2api.${matrix.ext}" .
+            -o "build_out/freetier2api.${{ matrix.ext }}" .
           
           # Đóng gói zip chuẩn CPA
           ZIP_NAME="freetier2api_${CLEAN_VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
           cd build_out
-          zip -9 "../dist/${ZIP_NAME}" "freetier2api.${matrix.ext}"
+          zip -9 "../dist/${ZIP_NAME}" "freetier2api.${{ matrix.ext }}"
           cd ..
           ls -lh dist/
 
