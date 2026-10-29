@@ -40,8 +40,15 @@ jobs:
           if [ -n "${{ github.event.inputs.tag_name }}" ]; then
             TAG="${{ github.event.inputs.tag_name }}"
           else
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.21")
-            TAG="${LATEST_TAG}-vi"
+            # Luôn lấy tag gốc mới nhất từ repo upstream (bỏ qua tag -vi của fork),
+            # tránh tình trạng nối chuỗi -vi-vi-vi mỗi lần build.
+            UPSTREAM_TAG=$(git ls-remote --tags --refs \
+              https://github.com/jiandanc/CLIProxyAPI-freetier2api-plugin.git \
+              | awk -F/ '{print $NF}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -n1)
+            [ -z "$UPSTREAM_TAG" ] && UPSTREAM_TAG="v0.1.21"
+            TAG="${UPSTREAM_TAG}-vi"
           fi
           echo "VERSION=${TAG}" >> $GITHUB_ENV
           echo "CLEAN_VERSION=${TAG#v}" >> $GITHUB_ENV
@@ -113,8 +120,13 @@ jobs:
           if [ -n "${{ github.event.inputs.tag_name }}" ]; then
             TAG="${{ github.event.inputs.tag_name }}"
           else
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.21")
-            TAG="${LATEST_TAG}-vi"
+            UPSTREAM_TAG=$(git ls-remote --tags --refs \
+              https://github.com/jiandanc/CLIProxyAPI-freetier2api-plugin.git \
+              | awk -F/ '{print $NF}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -n1)
+            [ -z "$UPSTREAM_TAG" ] && UPSTREAM_TAG="v0.1.21"
+            TAG="${UPSTREAM_TAG}-vi"
           fi
           echo "VERSION=${TAG}" >> $GITHUB_ENV
           echo "CLEAN_VERSION=${TAG#v}" >> $GITHUB_ENV
